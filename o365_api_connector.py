@@ -30,48 +30,65 @@ start = now - timedelta
 start_time = start.strftime("%Y-%m-%dT%H:%M") #"2018-07-16T19:00"
 end_time = now.strftime("%Y-%m-%dT%H:%M") #"2018-07-16T23:00"
 
+#set time frame for query
+timedelta = datetime.timedelta(minutes=10)
+now = datetime.datetime.utcnow()
+start = now - timedelta
+
+start_time = start.strftime("%Y-%m-%dT%H:%M") #"2018-07-16T19:00"
+end_time = now.strftime("%Y-%m-%dT%H:%M") #"2018-07-16T23:00"
+
+def blobs_processor(uri, log_count, lock):
+    #use URI to make request for events contained in blob
+    global tenant_id
+    event_blob = requests.get(uri + "?PublisherIdentifier=i" + tenant_id, headers=header)
+    if event_blob.status_code == 200:
+        events = json.loads(event_blob.content.decode('UTF-8'))
+        #some blobs have more than one event - this will push each event individually via TCP
+        for item in events:
+            event = item
+            with lock:
+                log_count.value += 1
+
+            # Open TCP connection to Logstash
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((TCP_IP, TCP_PORT))
+            # Send event over TCP connection
+            sock.send(str(json.dumps(event)).encode('utf-8'))
+            # Close Logstash TCP connection
+            sock.close()
+
+    elif event_blob.status_code == 500:
+        #print to stdout for use in Rundeck
+        print ("URI query - Status code: " + str(event_blob.status_code))
+        print (event_blob.json())
+        #print to logfile
+        logging.error("API status code: {} {} {} [content query]".format(event_blob.status_code, event_blob.json()['error']['code'], event_blob.json()['error']['message']))
+        sys.exit() #comment this out to test if only some of the uri queries are returning errors
+
+    else:
+        #print to stdout for use in Rundeck
+        print ("URI query - Status code: " + str(event_blob.status_code))
+        print (event_blob.json())
+        #print to logfile
+        logging.error("API status code: {} {} [uri query]".format(event_blob.status_code, event_blob.json()['message']))
+        sys.exit() #comment this out to test if only some of the uri queries are returning errors
+
+
 def process():
+    global WORKERS
+    log_count = Value('i', 0)
+    lock = Lock()
     if response.status_code == 200:
         blobs = response.json()
-
-        #iterate through list of available content blobs and pull URI
+        uri_list = []
         for blob in blobs:
-            uri = blob['contentUri']
-
-            #use URI to make request for events contained in blob
-            event_blob = requests.get(uri + "?PublisherIdentifier={}".format(tenant_id), headers=header)
-            if event_blob.status_code == 200:
-                events = json.loads(event_blob.content.decode('UTF-8'))
-
-                #some blobs have more than one event - this will push each event individually via TCP
-                for item in events:
-                    event = item
-
-                    # Open TCP connection to Logstash
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.connect((TCP_IP, TCP_PORT))
-                    # Send event over TCP connection
-                    sock.send(str(json.dumps(event)).encode('utf-8'))
-                    # Close Logstash TCP connection
-                    sock.close()
-
-            elif event_blob.status_code == 500:
-                #print to stdout for use in Rundeck
-                print ("URI query - Status code: " + str(event_blob.status_code))
-                print (event_blob.json())
-                #print to logfile
-                logging.error("API status code: {} {} {} [content query]".format(event_blob.status_code, event_blob.json()['error']['code'], event_blob.json()['error']['message']))
-                sys.exit() #comment this out to test if only some of the uri queries are returning errors
-
-            else:
-                #print to stdout for use in Rundeck
-                print ("URI query - Status code: " + str(event_blob.status_code))
-                print (event_blob.json())
-                #print to logfile
-                logging.error("API status code: {} {} [uri query]".format(event_blob.status_code, event_blob.json()['message']))
-                sys.exit() #comment this out to test if only some of the uri queries are returning errors
-
-    elif response.status_code == 500:
+            uri_list.append(blob['contentUri'])
+        procs = [Process(target=blobs_processor, args=(uri, log_count, lock)) for uri in uri_list]
+        for p in procs: p.start()
+        for p in procs: p.join()
+        print ("processed " + str(log_count.value) + " logs")
+        elif response.status_code == 500:
         #print to stdout for use in Rundeck
         print ("URI query - Status code: " + str(response.status_code))
         print (response.json())
@@ -99,20 +116,22 @@ token = context.acquire_token_with_client_certificate(
 if token['accessToken'] == None:
     logging.error("Null Access Token")
     #alert email@email.com
-
-else:
+    else:
     #add access token to header
     header = {"Authorization": "Bearer {}".format(token['accessToken'])}
 
     #poll to get available content
-    response = requests.get("https://manage.office.com/api/v1.0/{}/activity/feed/subscriptions/content?contentType=Audit.AzureActiveDirectory&startTime={}&endTime={}".format(tenant_id, start_time, end_time), headers=header)
+    response = requests.get("https://manage.office.com/api/v1.0/{}/activity/feed/subscriptions/content?contentType=Audit.SharePoint&startTime={}&endTime={}&PublisherIdentifier=".format(tenant_id, start_time, end_time, tenant_id), headers=header)
 
+    #define page #
+    page = 1
     while "NextPageUri" in response.headers:
+        print("Page " + str(page) + ":")
         next_page = response.headers['NextPageUri']
         process()
-
         #use next page uri to get more blobs
-        response = requests.get(next_page + "?PublisherIdentifier={}".format(tenant_id), headers=header)
-
+        response = requests.get(next_page + "?PublisherIdentifier=" + tenant_id, headers=header)
+        page += 1
     else:
+        print("Page " + str(page) + ":")
         process()
