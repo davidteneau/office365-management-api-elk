@@ -68,7 +68,6 @@ def blobs_processor(uri, log_count, lock):
 
 
 def process():
-    global WORKERS
     log_count = Value('i', 0)
     lock = Lock()
     if response.status_code == 200:
