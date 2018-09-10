@@ -18,6 +18,6 @@ token = context.acquire_token_with_client_certificate(
 header = {"Authorization": "Bearer {}".format(token['accessToken'])}
 
 #send subscription request
-result = requests.post("https://manage.office.com/api/v1.0/{}/activity/feed/subscriptions/start?contentType=Audit.AzureActiveDirectory".format(tenant_id), headers=header)
+result = requests.post("https://manage.office.com/api/v1.0/{}/activity/feed/subscriptions/start?contentType=Audit.SharePoint".format(tenant_id), headers=header)
 
 print (result.json())
