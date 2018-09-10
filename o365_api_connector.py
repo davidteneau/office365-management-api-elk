@@ -21,15 +21,6 @@ resource = "https://manage.office.com"
 private_key = open("YOUR-PRIVATE-KEY-FILENAME.pem", "r").read()
 public_key_thumbprint = "YOUR-PUBLIC-KEY-THUMBPRINT"
 
-
-#set time frame for query
-timedelta = datetime.timedelta(minutes=10)
-now = datetime.datetime.utcnow()
-start = now - timedelta
-
-start_time = start.strftime("%Y-%m-%dT%H:%M") #"2018-07-16T19:00"
-end_time = now.strftime("%Y-%m-%dT%H:%M") #"2018-07-16T23:00"
-
 #set time frame for query
 timedelta = datetime.timedelta(minutes=10)
 now = datetime.datetime.utcnow()
